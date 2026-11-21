@@ -1,0 +1,105 @@
+---
+- name: Deploy PrestaShop with MariaDB
+  hosts: prestashop
+  become: true
+  vars:
+    db_name: prestashop
+    db_user: psuser
+    db_pass: "StrongPass123!"
+    ps_version: "8.1.7"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - apache2
+          - mariadb-server
+          - php
+          - libapache2-mod-php
+          - php-mysql
+          - php-gd
+          - php-curl
+          - php-intl
+          - php-mbstring
+          - php-xml
+          - php-zip
+          - php-bcmath
+          - python3-pymysql
+          - unzip
+          - curl
+        state: present
+
+    - name: Start and enable MariaDB
+      service:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: Create database
+      community.mysql.mysql_db:
+        name: "{{ db_name }}"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Create database user
+      community.mysql.mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_pass }}"
+        priv: "{{ db_name }}.*:ALL"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Download PrestaShop
+      get_url:
+        url: "https://github.com/PrestaShop/PrestaShop/releases/download/{{ ps_version }}/prestashop_{{ ps_version }}.zip"
+        dest: /tmp/prestashop_outer.zip
+
+    - name: Create temp folder
+      file:
+        path: /tmp/ps
+        state: directory
+
+    - name: Unzip outer package
+      unarchive:
+        src: /tmp/prestashop_outer.zip
+        dest: /tmp/ps/
+        remote_src: yes
+        creates: /tmp/ps/prestashop.zip
+
+    - name: Unzip PrestaShop into web root
+      unarchive:
+        src: /tmp/ps/prestashop.zip
+        dest: /var/www/html/
+        remote_src: yes
+        creates: /var/www/html/install
+
+    - name: Set ownership
+      file:
+        path: /var/www/html
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    - name: Set PHP memory limit
+      lineinfile:
+        path: /etc/php/8.1/apache2/php.ini
+        regexp: '^memory_limit'
+        line: 'memory_limit = 512M'
+
+    - name: Enable Apache rewrite module
+      command: a2enmod rewrite
+      changed_when: false
+
+    - name: Remove default Apache index page
+      file:
+        path: /var/www/html/index.html
+        state: absent
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
